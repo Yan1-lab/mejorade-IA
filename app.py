@@ -11,10 +11,9 @@ from PIL import Image
 
 # ---------------- CONFIG ----------------
 st.set_page_config(page_title="Asistente Médico KB", page_icon="💊", layout="wide")
-
-openai.api_key = os.getenv("OPENAI_API_KEY")
+openai.api_key = os.getenv("OPENAI_API_KEY") or st.secrets["OPENAI_API_KEY"]
 if not openai.api_key:
-    st.error("⚠️ Configura tu OpenAI API Key en las variables de entorno.")
+    st.error("⚠️ Configura tu OpenAI API Key en secrets.")
     st.stop()
 
 # ---------------- BASE DE DATOS ----------------
@@ -54,7 +53,7 @@ def login_user(email, password):
 # ---------------- COOKIES ----------------
 cookies = EncryptedCookieManager(
     prefix="asistente_medico",
-    password="clave_super_secreta_123"
+    password=st.secrets.get("COOKIE_SECRET", "clave_super_secreta_123")
 )
 if not cookies.ready():
     st.stop()
@@ -71,7 +70,7 @@ def clear_cookie():
 def get_logged_user():
     return cookies.get("user")
 
-# ---------------- INTERFAZ ----------------
+# ---------------- APP ----------------
 def main():
     st.title("💊 Asistente Médico KB")
     st.caption("Tu asistente médico virtual, seguro y confiable.")
