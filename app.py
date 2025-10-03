@@ -4,12 +4,15 @@ import os
 import sqlite3
 import hashlib
 import datetime
-from streamlit_cookies_manager import EncryptedCookieManager
-from streamlit_lottie import st_lottie
 import requests
+from PIL import Image
 from pypdf import PdfReader
 from docx import Document
-from PIL import Image
+from streamlit_lottie import st_lottie
+from streamlit_cookies_manager import EncryptedCookieManager
+from google_auth_oauthlib.flow import Flow
+from google.oauth2 import id_token
+from google.auth.transport import requests as google_requests
 
 # ---------------- CONFIG ----------------
 st.set_page_config(page_title="Asistente Médico KB", page_icon="💊", layout="wide")
@@ -17,40 +20,6 @@ openai.api_key = os.getenv("OPENAI_API_KEY") or st.secrets["OPENAI_API_KEY"]
 if not openai.api_key:
     st.error("⚠️ Configura tu OpenAI API Key en secrets.")
     st.stop()
-
-# ---------------- BASE DE DATOS ----------------
-def init_db():
-    conn = sqlite3.connect("users.db")
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS users (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    email TEXT UNIQUE,
-                    password TEXT
-                )''')
-    conn.commit()
-    conn.close()
-
-def register_user(email, password):
-    conn = sqlite3.connect("users.db")
-    c = conn.cursor()
-    hashed = hashlib.sha256(password.encode()).hexdigest()
-    try:
-        c.execute("INSERT INTO users (email, password) VALUES (?, ?)", (email, hashed))
-        conn.commit()
-        return True
-    except sqlite3.IntegrityError:
-        return False
-    finally:
-        conn.close()
-
-def login_user(email, password):
-    conn = sqlite3.connect("users.db")
-    c = conn.cursor()
-    hashed = hashlib.sha256(password.encode()).hexdigest()
-    c.execute("SELECT * FROM users WHERE email=? AND password=?", (email, hashed))
-    user = c.fetchone()
-    conn.close()
-    return user
 
 # ---------------- COOKIES ----------------
 cookies = EncryptedCookieManager(
@@ -60,9 +29,9 @@ cookies = EncryptedCookieManager(
 if not cookies.ready():
     st.stop()
 
-def save_cookie(email):
-    cookies["user"] = email
-    cookies.set("expiry", str(datetime.datetime.now() + datetime.timedelta(days=365)))
+def save_cookie(user_info: dict):
+    cookies["user"] = user_info
+    cookies["expiry"] = str(datetime.datetime.now() + datetime.timedelta(days=365))
     cookies.save()
 
 def clear_cookie():
@@ -79,39 +48,51 @@ def load_lottieurl(url: str):
         return None
     return r.json()
 
+# ---------------- GOOGLE OAUTH ----------------
+def google_login():
+    flow = Flow.from_client_config(
+        {
+            "web": {
+                "client_id": st.secrets["GOOGLE_CLIENT_ID"],
+                "client_secret": st.secrets["GOOGLE_CLIENT_SECRET"],
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "redirect_uris": [st.secrets.get("REDIRECT_URI", "https://TU_APP.streamlit.app")],
+            }
+        },
+        scopes=["openid", "https://www.googleapis.com/auth/userinfo.profile", "https://www.googleapis.com/auth/userinfo.email"]
+    )
+
+    flow.redirect_uri = st.secrets.get("REDIRECT_URI", "https://TU_APP.streamlit.app")
+    
+    if "code" not in st.experimental_get_query_params():
+        auth_url, _ = flow.authorization_url(prompt="consent", access_type="offline", include_granted_scopes="true")
+        st.markdown(f"[Login con Google]({auth_url})")
+        st.stop()
+    else:
+        code = st.experimental_get_query_params()["code"][0]
+        flow.fetch_token(code=code)
+        credentials = flow.credentials
+        idinfo = id_token.verify_oauth2_token(credentials.id_token, google_requests.Request(), st.secrets["GOOGLE_CLIENT_ID"])
+        return {"email": idinfo["email"], "name": idinfo.get("name"), "photo": idinfo.get("picture")}
+
 # ---------------- APP ----------------
 def main():
     st.title("💊 Asistente Médico KB")
-    st.caption("Tu asistente médico virtual, seguro y confiable.")
+    st.caption("Tu asistente médico virtual con foto de perfil y login Google OAuth.")
 
     user = get_logged_user()
 
-    if not user:  
-        st.subheader("🔑 Inicia sesión o regístrate")
-        option = st.radio("Elige una opción", ["Login", "Registro"])
-
-        email = st.text_input("📧 Correo electrónico")
-        password = st.text_input("🔒 Contraseña", type="password")
-
-        if option == "Registro":
-            if st.button("Registrarse"):
-                if register_user(email, password):
-                    st.success("✅ Registro exitoso. Ya puedes usar el asistente.")
-                    save_cookie(email)
-                    st.experimental_rerun()
-                else:
-                    st.error("⚠️ El correo ya está registrado.")
-
-        elif option == "Login":
-            if st.button("Iniciar sesión"):
-                if login_user(email, password):
-                    st.success("✅ Bienvenido de nuevo")
-                    save_cookie(email)
-                    st.experimental_rerun()
-                else:
-                    st.error("⚠️ Usuario o contraseña incorrectos.")
+    if not user:
+        # Login Google
+        user_info = google_login()
+        if user_info:
+            save_cookie(user_info)
+            st.experimental_rerun()
     else:
-        st.sidebar.success(f"👋 Bienvenido, {user}")
+        # Mostrar perfil en sidebar
+        st.sidebar.image(user.get("photo"), width=50)
+        st.sidebar.text(f"👋 {user.get('name', user.get('email'))}")
         if st.sidebar.button("🚪 Cerrar sesión"):
             clear_cookie()
             st.experimental_rerun()
@@ -134,7 +115,6 @@ def main():
             st.chat_message("user").markdown(prompt)
 
             with st.chat_message("assistant"):
-                # Animación Lottie mientras piensa
                 lottie_url = "https://assets10.lottiefiles.com/packages/lf20_usmfx6bp.json"
                 lottie_animation = load_lottieurl(lottie_url)
                 if lottie_animation:
@@ -183,5 +163,4 @@ def main():
 
 # ---------------- EJECUCIÓN ----------------
 if __name__ == "__main__":
-    init_db()
     main()
