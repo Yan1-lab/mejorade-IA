@@ -1,7 +1,6 @@
 streamlit
 streamlit-lottie
 streamlit-cookies-manager
-streamlit-authenticator
 requests
 openai
 python-dotenv
@@ -15,3 +14,5 @@ pandas
 sqlalchemy
 pymysql
 bcrypt
+google-auth
+google-auth-oauthlib
