@@ -1,8 +1,6 @@
 import streamlit as st
 import openai
 import os
-import sqlite3
-import hashlib
 import datetime
 import requests
 from PIL import Image
@@ -16,6 +14,7 @@ from google.auth.transport import requests as google_requests
 
 # ---------------- CONFIG ----------------
 st.set_page_config(page_title="Asistente Médico KB", page_icon="💊", layout="wide")
+
 openai.api_key = os.getenv("OPENAI_API_KEY") or st.secrets["OPENAI_API_KEY"]
 if not openai.api_key:
     st.error("⚠️ Configura tu OpenAI API Key en secrets.")
@@ -62,15 +61,14 @@ def google_login():
         },
         scopes=["openid", "https://www.googleapis.com/auth/userinfo.profile", "https://www.googleapis.com/auth/userinfo.email"]
     )
-
     flow.redirect_uri = st.secrets.get("REDIRECT_URI", "https://TU_APP.streamlit.app")
-    
-    if "code" not in st.experimental_get_query_params():
+
+    if "code" not in st.query_params:
         auth_url, _ = flow.authorization_url(prompt="consent", access_type="offline", include_granted_scopes="true")
         st.markdown(f"[Login con Google]({auth_url})")
         st.stop()
     else:
-        code = st.experimental_get_query_params()["code"][0]
+        code = st.query_params["code"][0]
         flow.fetch_token(code=code)
         credentials = flow.credentials
         idinfo = id_token.verify_oauth2_token(credentials.id_token, google_requests.Request(), st.secrets["GOOGLE_CLIENT_ID"])
