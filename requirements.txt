@@ -1,9 +1,10 @@
 streamlit
 streamlit-lottie
 streamlit-cookies-manager
+streamlit-authenticator
+requests
 openai
 python-dotenv
-requests
 pypdf
 python-docx
 python-pptx
