@@ -2,20 +2,18 @@ import streamlit as st
 import openai
 import os
 import datetime
-import requests
+import bcrypt
 from PIL import Image
 from pypdf import PdfReader
 from docx import Document
 from streamlit_lottie import st_lottie
 from streamlit_cookies_manager import EncryptedCookieManager
-from google_auth_oauthlib.flow import Flow
-from google.oauth2 import id_token
-from google.auth.transport import requests as google_requests
+import requests
 
 # ---------------- CONFIG ----------------
 st.set_page_config(page_title="Asistente Médico KB", page_icon="💊", layout="wide")
 
-openai.api_key = os.getenv("OPENAI_API_KEY") or st.secrets["OPENAI_API_KEY"]
+openai.api_key = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY")
 if not openai.api_key:
     st.error("⚠️ Configura tu OpenAI API Key en secrets.")
     st.stop()
@@ -28,8 +26,8 @@ cookies = EncryptedCookieManager(
 if not cookies.ready():
     st.stop()
 
-def save_cookie(user_info: dict):
-    cookies["user"] = user_info
+def save_cookie(user_email: str):
+    cookies["user"] = user_email
     cookies["expiry"] = str(datetime.datetime.now() + datetime.timedelta(days=365))
     cookies.save()
 
@@ -47,117 +45,122 @@ def load_lottieurl(url: str):
         return None
     return r.json()
 
-# ---------------- GOOGLE OAUTH ----------------
-def google_login():
-    flow = Flow.from_client_config(
-        {
-            "web": {
-                "client_id": st.secrets["GOOGLE_CLIENT_ID"],
-                "client_secret": st.secrets["GOOGLE_CLIENT_SECRET"],
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token",
-                "redirect_uris": [st.secrets.get("REDIRECT_URI", "https://TU_APP.streamlit.app")],
-            }
-        },
-        scopes=["openid", "https://www.googleapis.com/auth/userinfo.profile", "https://www.googleapis.com/auth/userinfo.email"]
-    )
-    flow.redirect_uri = st.secrets.get("REDIRECT_URI", "https://TU_APP.streamlit.app")
+# ---------------- USUARIOS ----------------
+if "users" not in st.session_state:
+    st.session_state.users = {}  # email: hashed_password
 
-    if "code" not in st.query_params:
-        auth_url, _ = flow.authorization_url(prompt="consent", access_type="offline", include_granted_scopes="true")
-        st.markdown(f"[Login con Google]({auth_url})")
-        st.stop()
-    else:
-        code = st.query_params["code"][0]
-        flow.fetch_token(code=code)
-        credentials = flow.credentials
-        idinfo = id_token.verify_oauth2_token(credentials.id_token, google_requests.Request(), st.secrets["GOOGLE_CLIENT_ID"])
-        return {"email": idinfo["email"], "name": idinfo.get("name"), "photo": idinfo.get("picture")}
+def register_user(email, password):
+    hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
+    st.session_state.users[email] = hashed
+    save_cookie(email)
+
+def login_user(email, password):
+    hashed = st.session_state.users.get(email)
+    if hashed and bcrypt.checkpw(password.encode(), hashed):
+        save_cookie(email)
+        return True
+    return False
 
 # ---------------- APP ----------------
 def main():
     st.title("💊 Asistente Médico KB")
-    st.caption("Tu asistente médico virtual con foto de perfil y login Google OAuth.")
+    
+    user_email = get_logged_user()
 
-    user = get_logged_user()
+    if not user_email:
+        st.subheader("🔑 Registro / Login")
+        mode = st.radio("Elige acción:", ["Login", "Registro"])
+        email = st.text_input("Email")
+        password = st.text_input("Contraseña", type="password")
 
-    if not user:
-        # Login Google
-        user_info = google_login()
-        if user_info:
-            save_cookie(user_info)
-            st.experimental_rerun()
-    else:
-        # Mostrar perfil en sidebar
-        st.sidebar.image(user.get("photo"), width=50)
-        st.sidebar.text(f"👋 {user.get('name', user.get('email'))}")
-        if st.sidebar.button("🚪 Cerrar sesión"):
-            clear_cookie()
-            st.experimental_rerun()
+        if st.button("Continuar"):
+            if mode == "Registro":
+                if email in st.session_state.users:
+                    st.warning("⚠️ Usuario ya registrado.")
+                else:
+                    register_user(email, password)
+                    st.success("✅ Registro exitoso. Ya puedes usar el asistente.")
+                    st.experimental_rerun()
+            else:  # Login
+                if login_user(email, password):
+                    st.success("✅ Login exitoso.")
+                    st.experimental_rerun()
+                else:
+                    st.error("❌ Email o contraseña incorrectos.")
+        return
 
-        # ---------------- CHAT ----------------
-        st.subheader("🤖 Chat Médico")
-        if "messages" not in st.session_state:
-            st.session_state.messages = [
-                {"role": "assistant", "content": "👋 Hola, soy tu asistente médico KB. ¿Qué síntomas tienes hoy?"}
-            ]
+    # ---------------- SIDEBAR ----------------
+    st.sidebar.text(f"👋 {user_email}")
+    if st.sidebar.button("🚪 Cerrar sesión / Cambiar usuario"):
+        clear_cookie()
+        st.experimental_rerun()
 
-        for msg in st.session_state.messages:
-            if msg["role"] == "user":
-                st.chat_message("user").markdown(msg["content"])
-            else:
-                st.chat_message("assistant").markdown(msg["content"])
+    # ---------------- CHAT ----------------
+    st.subheader("🤖 Chat Médico")
+    if "messages" not in st.session_state:
+        st.session_state.messages = [
+            {"role": "assistant", "content": "👋 Hola, soy tu asistente médico KB. ¿Qué síntomas tienes hoy?"}
+        ]
 
-        if prompt := st.chat_input("Describe tus síntomas..."):
-            st.session_state.messages.append({"role": "user", "content": prompt})
-            st.chat_message("user").markdown(prompt)
+    # Mostrar historial
+    for msg in st.session_state.messages:
+        if msg["role"] == "user":
+            st.chat_message("user").markdown(msg["content"])
+        else:
+            st.chat_message("assistant").markdown(msg["content"])
 
-            with st.chat_message("assistant"):
-                lottie_url = "https://assets10.lottiefiles.com/packages/lf20_usmfx6bp.json"
-                lottie_animation = load_lottieurl(lottie_url)
-                if lottie_animation:
-                    st_lottie(lottie_animation, speed=1, width=150, height=150, key="loading")
+    # Input de chat
+    if prompt := st.chat_input("Describe tus síntomas..."):
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        st.chat_message("user").markdown(prompt)
 
-                with st.spinner("💭 Analizando con IA..."):
-                    try:
-                        response = openai.chat.completions.create(
-                            model="gpt-4o-mini",
-                            messages=[
-                                {"role": "system", "content":
-                                 "Eres un asistente médico. Da posibles causas de síntomas, pero aclara que no reemplazas a un médico real."},
-                                *st.session_state.messages
-                            ],
-                            max_tokens=400,
-                            temperature=0.5
-                        )
-                        reply = response.choices[0].message.content
-                    except Exception as e:
-                        reply = f"⚠️ Error al conectar con OpenAI: {e}"
+        with st.chat_message("assistant"):
+            # Animación Lottie
+            lottie_url = "https://assets10.lottiefiles.com/packages/lf20_usmfx6bp.json"
+            lottie_animation = load_lottieurl(lottie_url)
+            if lottie_animation:
+                st_lottie(lottie_animation, speed=1, width=150, height=150, key="loading")
 
-                st.markdown(reply)
-                st.session_state.messages.append({"role": "assistant", "content": reply})
+            with st.spinner("💭 Analizando con IA..."):
+                try:
+                    response = openai.chat.completions.create(
+                        model="gpt-4o-mini",
+                        messages=[
+                            {"role": "system", "content":
+                             "Eres un asistente médico. Da posibles causas de síntomas, pero aclara que no reemplazas a un médico real."},
+                            *st.session_state.messages
+                        ],
+                        max_tokens=400,
+                        temperature=0.5
+                    )
+                    reply = response.choices[0].message.content
+                except Exception as e:
+                    reply = f"⚠️ Error al conectar con OpenAI: {e}"
 
-        # ---------------- SUBIDA DE ARCHIVOS ----------------
-        st.subheader("📂 Subir Archivos Médicos")
-        uploaded = st.file_uploader("Sube un archivo (PDF, Word, Imagen)", type=["pdf", "docx", "png", "jpg", "jpeg"])
+            st.markdown(reply)
+            st.session_state.messages.append({"role": "assistant", "content": reply})
 
-        if uploaded:
-            text = ""
-            if uploaded.type == "application/pdf":
-                pdf = PdfReader(uploaded)
-                for page in pdf.pages:
-                    text += page.extract_text() + "\n"
-            elif uploaded.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-                doc = Document(uploaded)
-                for para in doc.paragraphs:
-                    text += para.text + "\n"
-            elif "image" in uploaded.type:
-                image = Image.open(uploaded)
-                st.image(image, caption="Imagen subida")
-                text = "[Imagen cargada - análisis futuro con OCR]"
+    # ---------------- SUBIDA DE ARCHIVOS ----------------
+    st.subheader("📂 Subir Archivos Médicos")
+    uploaded = st.file_uploader("Sube un archivo (PDF, Word, Imagen)", type=["pdf", "docx", "png", "jpg", "jpeg"])
 
-            if text:
-                st.text_area("Contenido extraído", text, height=200)
+    if uploaded:
+        text = ""
+        if uploaded.type == "application/pdf":
+            pdf = PdfReader(uploaded)
+            for page in pdf.pages:
+                text += page.extract_text() + "\n"
+        elif uploaded.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+            doc = Document(uploaded)
+            for para in doc.paragraphs:
+                text += para.text + "\n"
+        elif "image" in uploaded.type:
+            image = Image.open(uploaded)
+            st.image(image, caption="Imagen subida")
+            text = "[Imagen cargada - análisis futuro con OCR]"
+
+        if text:
+            st.text_area("Contenido extraído", text, height=200)
 
 # ---------------- EJECUCIÓN ----------------
 if __name__ == "__main__":
