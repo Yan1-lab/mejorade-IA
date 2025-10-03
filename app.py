@@ -5,6 +5,8 @@ import sqlite3
 import hashlib
 import datetime
 from streamlit_cookies_manager import EncryptedCookieManager
+from streamlit_lottie import st_lottie
+import requests
 from PyPDF2 import PdfReader
 from docx import Document
 from PIL import Image
@@ -70,6 +72,13 @@ def clear_cookie():
 def get_logged_user():
     return cookies.get("user")
 
+# ---------------- LOTTIE ----------------
+def load_lottieurl(url: str):
+    r = requests.get(url)
+    if r.status_code != 200:
+        return None
+    return r.json()
+
 # ---------------- APP ----------------
 def main():
     st.title("💊 Asistente Médico KB")
@@ -125,7 +134,13 @@ def main():
             st.chat_message("user").markdown(prompt)
 
             with st.chat_message("assistant"):
-                with st.spinner("💭 Analizando..."):
+                # Animación Lottie mientras piensa
+                lottie_url = "https://assets10.lottiefiles.com/packages/lf20_usmfx6bp.json"
+                lottie_animation = load_lottieurl(lottie_url)
+                if lottie_animation:
+                    st_lottie(lottie_animation, speed=1, width=150, height=150, key="loading")
+
+                with st.spinner("💭 Analizando con IA..."):
                     try:
                         response = openai.chat.completions.create(
                             model="gpt-4o-mini",
