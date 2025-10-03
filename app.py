@@ -7,7 +7,7 @@ import datetime
 from streamlit_cookies_manager import EncryptedCookieManager
 from streamlit_lottie import st_lottie
 import requests
-from PyPDF2 import PdfReader
+from pypdf import PdfReader
 from docx import Document
 from PIL import Image
 
@@ -55,7 +55,7 @@ def login_user(email, password):
 # ---------------- COOKIES ----------------
 cookies = EncryptedCookieManager(
     prefix="asistente_medico",
-    password=st.secrets.get("COOKIE_SECRET", "clave_super_secreta_123")
+    password=st.secrets.get("COOKIE_SECRET", "clave_super_secreta_aleatoria_y_larga")
 )
 if not cookies.ready():
     st.stop()
