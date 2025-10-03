@@ -1,0 +1,17 @@
+streamlit
+streamlit-cookies-manager
+sqlalchemy
+pymysql
+bcrypt
+openai
+python-dotenv
+pypdf
+pdf2image
+pytesseract
+python-docx
+python-pptx
+openpyxl
+pandas
+Pillow
+reportlab
+matplotlib
